@@ -8,6 +8,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+
+# Local media / scratch (not versioned)
+/docs/
+
 dist
 dist-portable
 dist-ssr

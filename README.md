@@ -8,9 +8,9 @@ This project targets **older TVs** (or USB media players) where a **flash drive 
 
 **Note:** actual part sizes may vary slightly (cuts on *keyframes*). To stay safely under the FAT32 limit, use a cap **a bit below 4 GB** (e.g. 3.7 or 3.8 GB) instead of exactly 4.0 GB.
 
-## MP4 → MKV (remux, optional)
+## MP4 → MKV for TV (optional)
 
-The app has a separate **MP4 → MKV** mode: it **remuxes** `.mp4` / `.m4v` into **`.mkv`** using FFmpeg **stream copy** (`-c copy` again — fast, **no re-encoding**). Video stays in the same codec (e.g. **H.264** stays H.264); only the **container** changes to Matroska. Output is **`basename.mkv`** in the folder you choose; if that file already exists, the conversion is **refused** (no overwrite). Some streams may fail to copy into MKV depending on the file; then FFmpeg will error and any partial output is removed.
+The app has a separate **MP4 → MKV (TV)** mode: it **transcodes** `.mp4` / `.m4v` into **`.mkv`** for broader TV/USB compatibility — **H.264 High, level 4.1**, **30 fps**, **AAC stereo 48 kHz** (CRF 20 / `medium` preset). Subtitle streams are **copied** when FFmpeg accepts them in Matroska. This is **slower** than a plain remux and involves **some** quality trade-off vs. the source. Output is **`basename.mkv`** in the folder you choose; if that file already exists, the conversion is **refused** (no overwrite). On FFmpeg failure, any partial output is removed.
 
 ## Requirement: FFmpeg
 

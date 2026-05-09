@@ -321,7 +321,7 @@ export default function App() {
     setProgress(0);
     setLogLines([]);
     appendLog(
-      "Remux MP4/M4V → MKV com -c copy (sem re-encoding; H.264 e outros codecs são preservados se o FFmpeg aceitar no Matroska)."
+      "MP4/M4V → MKV para TV: re-encoding H.264 High nível 4.1, 30 fps, AAC estéreo 48 kHz; legendas copiadas quando o FFmpeg permitir (demora mais que remux)."
     );
     runNextConvert();
   };
@@ -352,7 +352,7 @@ export default function App() {
         <h1>VideoDivider</h1>
         <p className="subtitle">
           Divide MKV, MP4 e outros vídeos em partes próximas ao tamanho em GB (via FFmpeg, sem
-          re-encoding), ou remuxa MP4/M4V para MKV.
+          re-encoding), ou converta MP4/M4V para MKV com perfil compatível com TVs.
         </p>
       </header>
 
@@ -371,7 +371,7 @@ export default function App() {
           onClick={() => setMode("convert")}
           disabled={busy}
         >
-          MP4 → MKV
+          MP4 → MKV (TV)
         </button>
       </div>
 
@@ -461,8 +461,9 @@ export default function App() {
           </label>
 
           <p className="hint" style={{ margin: 0 }}>
-            Gera <code>nome.mkv</code> na pasta escolhida (mesmo nome do ficheiro de entrada). Se já
-            existir um <code>.mkv</code> com esse nome, a conversão não sobrescreve.
+            Gera <code>nome.mkv</code> na pasta escolhida (mesmo nome base do ficheiro). Ajusta vídeo e
+            áudio para leitura em muitas TVs (ex.: evita 1080p60/nível H.264 que alguns aparelhos não
+            suportam). Se já existir um <code>.mkv</code> com esse nome, não sobrescreve.
           </p>
         </section>
       )}
@@ -508,10 +509,9 @@ export default function App() {
           </>
         ) : (
           <>
-            Modo MP4 → MKV: remux com <code>-c copy</code> (rápido, sem perdas de qualidade). O
-            vídeo continua no mesmo codec (por exemplo H.264); só muda o contentor para Matroska. Se
-            o FFmpeg recusar copiar algum fluxo, experimente outro ficheiro ou use ferramentas de
-            transcoding.
+            Modo MP4 → MKV (TV): re-encoding para H.264 High nível 4.1 a 30 fps, AAC estéreo 48 kHz.
+            Demora mais que um remux e há pequena perda de qualidade típica de CRF 20. Legendas são
+            copiadas quando o FFmpeg as aceita no MKV.
           </>
         )}
       </footer>

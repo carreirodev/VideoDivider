@@ -522,13 +522,43 @@ fn convert_mp4_to_mkv_start(
     std::thread::spawn(move || {
         let run = || -> Result<(), String> {
             let mut cmd = Command::new(&ffmpeg_path);
+            // MP4/M4V → MKV com perfil “TV”: H.264 até nível 4.1, 30 fps (evita 1080p60/nível 4.2
+            // que muitas TVs não decodificam), AAC estéreo 48 kHz; legendas copiadas quando possível.
             cmd.arg("-hide_banner")
                 .arg("-nostdin")
                 .arg("-i")
                 .arg(&input_path)
-                .arg("-map")
+                .arg("-map_chapters")
                 .arg("0")
-                .arg("-c")
+                .arg("-map")
+                .arg("0:v:0")
+                .arg("-map")
+                .arg("0:a?")
+                .arg("-map")
+                .arg("0:s?")
+                .arg("-c:v")
+                .arg("libx264")
+                .arg("-profile:v")
+                .arg("high")
+                .arg("-level")
+                .arg("4.1")
+                .arg("-pix_fmt")
+                .arg("yuv420p")
+                .arg("-vf")
+                .arg("fps=30")
+                .arg("-preset")
+                .arg("medium")
+                .arg("-crf")
+                .arg("20")
+                .arg("-c:a")
+                .arg("aac")
+                .arg("-b:a")
+                .arg("192k")
+                .arg("-ar")
+                .arg("48000")
+                .arg("-ac")
+                .arg("2")
+                .arg("-c:s")
                 .arg("copy")
                 .arg(&out_str)
                 .stderr(Stdio::piped());
@@ -561,7 +591,7 @@ fn convert_mp4_to_mkv_start(
             if !status.success() {
                 let _ = fs::remove_file(&out_str);
                 return Err(
-                    "O FFmpeg terminou com erro (remux MP4→MKV). Fluxos ou legendas podem ser incompatíveis com MKV.".into(),
+                    "O FFmpeg terminou com erro (MP4→MKV para TV). Confira se há legendas ou fluxos que não admitem cópia para MKV.".into(),
                 );
             }
 
