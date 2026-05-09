@@ -92,7 +92,14 @@ export default function App() {
     let unErr: UnlistenFn | undefined;
 
     void listen<SplitProgressPayload>("split-progress", (ev) => {
-      if (ev.payload.ratio != null) setProgress(ev.payload.ratio);
+      if (ev.payload.ratio != null) {
+        const n = queueRef.current.length;
+        if (n > 0) {
+          const i = queueIndexRef.current;
+          const overall = Math.min(1, (i + ev.payload.ratio) / n);
+          setProgress(overall);
+        }
+      }
       if (ev.payload.line) appendLog(ev.payload.line);
     }).then((fn) => {
       unProgress = fn;
@@ -101,7 +108,6 @@ export default function App() {
     void listen("split-done", () => {
       appendLog("Trecho finalizado.");
       queueIndexRef.current += 1;
-      setProgress(0);
       runQueueRef.current?.();
     }).then((fn) => {
       unDone = fn;
