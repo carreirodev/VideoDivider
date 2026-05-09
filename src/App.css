@@ -34,6 +34,42 @@ body {
   font-size: 0.92rem;
 }
 
+.mode-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  padding: 0.25rem;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.mode-tabs button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-weight: 600;
+  font-size: 0.86rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  color: #555;
+}
+
+.mode-tabs button:hover:not(:disabled) {
+  background: rgba(43, 80, 216, 0.08);
+  color: #1a1a1a;
+}
+
+.mode-tabs button.active {
+  background: #2b50d8;
+  color: #fff;
+}
+
+.mode-tabs button.active:hover:not(:disabled) {
+  background: #213dc0;
+  color: #fff;
+}
+
 .panel {
   margin-top: 1rem;
   padding: 1rem;
@@ -212,6 +248,29 @@ code {
 
   .subtitle {
     color: #b8bcc8;
+  }
+
+  .mode-tabs {
+    background: #242830;
+    box-shadow: none;
+  }
+
+  .mode-tabs button {
+    color: #a0a4b0;
+  }
+
+  .mode-tabs button:hover:not(:disabled) {
+    background: rgba(61, 94, 255, 0.15);
+    color: #e6e8ed;
+  }
+
+  .mode-tabs button.active {
+    background: #3d5eff;
+    color: #fff;
+  }
+
+  .mode-tabs button.active:hover:not(:disabled) {
+    background: #3d5eff;
   }
 
   .panel,

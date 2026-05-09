@@ -22,6 +22,9 @@
 1. **[2026-05-08] Divisão por GB é heurística com `-c copy`**
    Do instead: deixar claro na UI que partes podem passar um pouco do teto por causa de GOP/keyframes.
 
+2. **[2026-05-09] Aba MP4 → MKV: remux com `-c copy`**
+   Do instead: eventos `convert-*`; saída `stem.mkv`; não sobrescrever se já existir; `split_cancel` encerra também a conversão.
+
 ## Shell & Paths (Windows)
 
 1. **`which`/PATH no Tauri**

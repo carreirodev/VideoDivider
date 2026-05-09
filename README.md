@@ -8,6 +8,10 @@ This project targets **older TVs** (or USB media players) where a **flash drive 
 
 **Note:** actual part sizes may vary slightly (cuts on *keyframes*). To stay safely under the FAT32 limit, use a cap **a bit below 4 GB** (e.g. 3.7 or 3.8 GB) instead of exactly 4.0 GB.
 
+## MP4 → MKV (remux, optional)
+
+The app has a separate **MP4 → MKV** mode: it **remuxes** `.mp4` / `.m4v` into **`.mkv`** using FFmpeg **stream copy** (`-c copy` again — fast, **no re-encoding**). Video stays in the same codec (e.g. **H.264** stays H.264); only the **container** changes to Matroska. Output is **`basename.mkv`** in the folder you choose; if that file already exists, the conversion is **refused** (no overwrite). Some streams may fail to copy into MKV depending on the file; then FFmpeg will error and any partial output is removed.
+
 ## Requirement: FFmpeg
 
 Install [FFmpeg](https://ffmpeg.org/download.html) and ensure **`ffmpeg`** and **`ffprobe`** are on your **PATH**. The VideoDivider binary **does not bundle** FFmpeg; it only invokes it.
@@ -30,6 +34,16 @@ npm run tauri dev
 ```bash
 npm run tauri build
 ```
+
+### Portable Windows (folder + ZIP, no installer)
+
+Produces `dist-portable/VideoDivider-<version>-windows-x64-portable/` with the `.exe` and a matching `.zip`, after a **release** Tauri build:
+
+```bash
+npm run tauri:win-portable
+```
+
+You still need **FFmpeg** on the machine **PATH** when running the portable executable.
 
 ## License
 

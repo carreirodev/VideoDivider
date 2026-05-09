@@ -457,6 +457,130 @@ fn split_video_start(
     Ok(())
 }
 
+fn is_mp4_like(path: &Path) -> bool {
+    path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mp4") || e.eq_ignore_ascii_case("m4v"))
+}
+
+#[tauri::command]
+fn convert_mp4_to_mkv_start(
+    app: AppHandle,
+    state: State<'_, Arc<SplitState>>,
+    input_path: String,
+    output_dir: String,
+) -> Result<(), String> {
+    resolve_bin("ffmpeg").ok_or("ffmpeg não encontrado no PATH.")?;
+
+    let input_path_buf = PathBuf::from(&input_path);
+    if !input_path_buf.is_file() {
+        return Err("Arquivo de entrada não encontrado.".into());
+    }
+    if !is_mp4_like(&input_path_buf) {
+        return Err(
+            "A conversão MP4 → MKV aceita apenas arquivos .mp4 ou .m4v.".into(),
+        );
+    }
+
+    let out_dir = Path::new(&output_dir);
+    if !out_dir.is_dir() {
+        return Err("Pasta de saída não existe ou não é uma pasta.".into());
+    }
+
+    let stem = input_path_buf
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("video")
+        .to_string();
+    let output_path = out_dir.join(format!("{stem}.mkv"));
+    if output_path.exists() {
+        return Err(format!(
+            "Já existe um arquivo na saída: {}. Apague ou renomeie antes de converter.",
+            output_path.display()
+        ));
+    }
+
+    let duration_for_progress = probe_duration_only(&input_path)?;
+
+    {
+        let mut g = state
+            .current_pid
+            .lock()
+            .map_err(|_| "Estado interno bloqueado.".to_string())?;
+        if let Some(pid) = *g {
+            let _ = kill_pid(pid);
+        }
+        *g = None;
+    }
+
+    let app_handle = app.clone();
+    let state_arc = Arc::clone(&*state);
+    let ffmpeg_path = resolve_bin("ffmpeg").ok_or("ffmpeg não encontrado.")?;
+    let out_str = output_path.to_string_lossy().into_owned();
+
+    std::thread::spawn(move || {
+        let run = || -> Result<(), String> {
+            let mut cmd = Command::new(&ffmpeg_path);
+            cmd.arg("-hide_banner")
+                .arg("-nostdin")
+                .arg("-i")
+                .arg(&input_path)
+                .arg("-map")
+                .arg("0")
+                .arg("-c")
+                .arg("copy")
+                .arg(&out_str)
+                .stderr(Stdio::piped());
+            suppress_child_console(&mut cmd);
+
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| format!("Falha ao iniciar o FFmpeg: {e}"))?;
+            let pid = child.id();
+            {
+                if let Ok(mut g) = state_arc.current_pid.lock() {
+                    *g = Some(pid);
+                }
+            }
+
+            let stderr = child.stderr.take().ok_or("stderr do FFmpeg indisponível.")?;
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                let ratio = parse_ffmpeg_time_ratio(&line, duration_for_progress);
+                let payload = SplitProgressPayload { line, ratio };
+                let _ = app_handle.emit("convert-progress", &payload);
+            }
+
+            let status = child.wait().map_err(|e| e.to_string())?;
+            {
+                if let Ok(mut g) = state_arc.current_pid.lock() {
+                    *g = None;
+                }
+            }
+            if !status.success() {
+                let _ = fs::remove_file(&out_str);
+                return Err(
+                    "O FFmpeg terminou com erro (remux MP4→MKV). Fluxos ou legendas podem ser incompatíveis com MKV.".into(),
+                );
+            }
+
+            Ok(())
+        };
+
+        match run() {
+            Ok(_) => {
+                let _ = app_handle.emit("convert-done", &serde_json::json!({ "ok": true }));
+            }
+            Err(e) => {
+                let _ = app_handle.emit("convert-error", &serde_json::json!({ "message": e }));
+            }
+        }
+    });
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod stem_tests {
     use super::*;
@@ -488,6 +612,7 @@ pub fn run() {
             probe_file,
             split_video_start,
             split_cancel,
+            convert_mp4_to_mkv_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

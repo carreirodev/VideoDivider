@@ -18,6 +18,8 @@ type SplitProgressPayload = {
 
 type SplitErrorPayload = { message: string };
 
+type AppMode = "split" | "convert";
+
 function parseGb(input: string): number | null {
   const n = Number(input.trim().replace(",", "."));
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -25,11 +27,14 @@ function parseGb(input: string): number | null {
 }
 
 export default function App() {
+  const [mode, setMode] = useState<AppMode>("split");
   const [ffmpegInfo, setFfmpegInfo] = useState<FfmpegStatus | null>(null);
   const [filePaths, setFilePaths] = useState<string[]>([]);
   const [outputDir, setOutputDir] = useState<string>("");
   const [subtitlePath, setSubtitlePath] = useState<string | null>(null);
   const [gbInput, setGbInput] = useState("2");
+  const [convertPaths, setConvertPaths] = useState<string[]>([]);
+  const [convertOutputDir, setConvertOutputDir] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [logLines, setLogLines] = useState<string[]>([]);
@@ -41,6 +46,11 @@ export default function App() {
   const queueIndexRef = useRef(0);
   const subtitlePathRef = useRef<string | null>(null);
   const runQueueRef = useRef<(() => void) | null>(null);
+
+  const convertQueueRef = useRef<string[]>([]);
+  const convertOutDirRef = useRef("");
+  const convertIndexRef = useRef(0);
+  const runConvertRef = useRef<(() => void) | null>(null);
 
   const appendLog = useCallback((line: string) => {
     setLogLines((prev) => [...prev.slice(-400), line]);
@@ -82,9 +92,36 @@ export default function App() {
     });
   }, [appendLog]);
 
+  const runNextConvert = useCallback(() => {
+    const files = convertQueueRef.current;
+    const i = convertIndexRef.current;
+    if (i >= files.length) {
+      setBusy(false);
+      setProgress(1);
+      appendLog("Conversões concluídas.");
+      return;
+    }
+    const path = files[i];
+    appendLog(`— Converter (${i + 1}/${files.length}) —`);
+    appendLog(path);
+    void invoke("convert_mp4_to_mkv_start", {
+      inputPath: path,
+      outputDir: convertOutDirRef.current,
+    }).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      appendLog(`Erro: ${msg}`);
+      setBusy(false);
+      setProgress(0);
+    });
+  }, [appendLog]);
+
   useEffect(() => {
     runQueueRef.current = runNextInQueue;
   }, [runNextInQueue]);
+
+  useEffect(() => {
+    runConvertRef.current = runNextConvert;
+  }, [runNextConvert]);
 
   useEffect(() => {
     let unProgress: UnlistenFn | undefined;
@@ -128,6 +165,48 @@ export default function App() {
     };
   }, [appendLog]);
 
+  useEffect(() => {
+    let unProgress: UnlistenFn | undefined;
+    let unDone: UnlistenFn | undefined;
+    let unErr: UnlistenFn | undefined;
+
+    void listen<SplitProgressPayload>("convert-progress", (ev) => {
+      if (ev.payload.ratio != null) {
+        const n = convertQueueRef.current.length;
+        if (n > 0) {
+          const i = convertIndexRef.current;
+          const overall = Math.min(1, (i + ev.payload.ratio) / n);
+          setProgress(overall);
+        }
+      }
+      if (ev.payload.line) appendLog(ev.payload.line);
+    }).then((fn) => {
+      unProgress = fn;
+    });
+
+    void listen("convert-done", () => {
+      appendLog("Conversão finalizada.");
+      convertIndexRef.current += 1;
+      runConvertRef.current?.();
+    }).then((fn) => {
+      unDone = fn;
+    });
+
+    void listen<SplitErrorPayload>("convert-error", (ev) => {
+      appendLog(`Erro FFmpeg: ${ev.payload.message}`);
+      setBusy(false);
+      setProgress(0);
+    }).then((fn) => {
+      unErr = fn;
+    });
+
+    return () => {
+      void unProgress?.();
+      void unDone?.();
+      void unErr?.();
+    };
+  }, [appendLog]);
+
   const pickVideos = async () => {
     const sel = await open({
       multiple: true,
@@ -149,6 +228,22 @@ export default function App() {
     }
   };
 
+  const pickMp4ForConvert = async () => {
+    const sel = await open({
+      multiple: true,
+      filters: [{ name: "MP4 / M4V", extensions: ["mp4", "m4v"] }],
+      title: "Selecionar MP4 para converter a MKV",
+    });
+    if (sel == null) return;
+    const list = Array.isArray(sel) ? sel : [sel];
+    setConvertPaths(list);
+    if (!convertOutputDir && list.length > 0) {
+      const first = list[0].replace(/[/\\][^/\\]+$/, "");
+      setConvertOutputDir(first);
+      convertOutDirRef.current = first;
+    }
+  };
+
   const pickFolder = async () => {
     const sel = await open({
       directory: true,
@@ -157,6 +252,17 @@ export default function App() {
     if (typeof sel === "string") {
       setOutputDir(sel);
       outputDirRef.current = sel;
+    }
+  };
+
+  const pickConvertFolder = async () => {
+    const sel = await open({
+      directory: true,
+      title: "Pasta de saída (MKV)",
+    });
+    if (typeof sel === "string") {
+      setConvertOutputDir(sel);
+      convertOutDirRef.current = sel;
     }
   };
 
@@ -194,6 +300,32 @@ export default function App() {
     runNextInQueue();
   };
 
+  const startConvertQueue = () => {
+    if (!ffmpegInfo?.available) {
+      appendLog("FFmpeg não está disponível. Instale e adicione ao PATH.");
+      return;
+    }
+    if (convertPaths.length === 0) {
+      appendLog("Selecione ao menos um arquivo .mp4 ou .m4v.");
+      return;
+    }
+    if (!convertOutputDir) {
+      appendLog("Escolha a pasta de saída.");
+      return;
+    }
+
+    convertOutDirRef.current = convertOutputDir;
+    convertQueueRef.current = [...convertPaths];
+    convertIndexRef.current = 0;
+    setBusy(true);
+    setProgress(0);
+    setLogLines([]);
+    appendLog(
+      "Remux MP4/M4V → MKV com -c copy (sem re-encoding; H.264 e outros codecs são preservados se o FFmpeg aceitar no Matroska)."
+    );
+    runNextConvert();
+  };
+
   const pickSrt = async () => {
     const sel = await open({
       multiple: false,
@@ -220,75 +352,131 @@ export default function App() {
         <h1>VideoDivider</h1>
         <p className="subtitle">
           Divide MKV, MP4 e outros vídeos em partes próximas ao tamanho em GB (via FFmpeg, sem
-          re-encoding).
+          re-encoding), ou remuxa MP4/M4V para MKV.
         </p>
       </header>
+
+      <div className="mode-tabs">
+        <button
+          type="button"
+          className={mode === "split" ? "active" : ""}
+          onClick={() => setMode("split")}
+          disabled={busy}
+        >
+          Dividir por tamanho
+        </button>
+        <button
+          type="button"
+          className={mode === "convert" ? "active" : ""}
+          onClick={() => setMode("convert")}
+          disabled={busy}
+        >
+          MP4 → MKV
+        </button>
+      </div>
 
       <section className="panel">
         <div className="status-pill" data-ok={ffmpegInfo?.available ?? false}>
           {ffmpegInfo?.available ? "FFmpeg OK" : "FFmpeg ausente"}
         </div>
-        {ffmpegInfo && (
-          <p className="hint">{ffmpegInfo.message}</p>
-        )}
+        {ffmpegInfo && <p className="hint">{ffmpegInfo.message}</p>}
       </section>
 
-      <section className="panel grid">
-        <label className="field">
-          <span>Arquivos</span>
-          <div className="field-row">
-            <button type="button" onClick={pickVideos} disabled={busy}>
-              Escolher vídeos…
-            </button>
-            <span className="muted">
-              {filePaths.length === 0 ? "Nenhum" : `${filePaths.length} selecionado(s)`}
-            </span>
-          </div>
-        </label>
+      {mode === "split" ? (
+        <section className="panel grid">
+          <label className="field">
+            <span>Arquivos</span>
+            <div className="field-row">
+              <button type="button" onClick={pickVideos} disabled={busy}>
+                Escolher vídeos…
+              </button>
+              <span className="muted">
+                {filePaths.length === 0 ? "Nenhum" : `${filePaths.length} selecionado(s)`}
+              </span>
+            </div>
+          </label>
 
-        <label className="field">
-          <span>Pasta de saída</span>
-          <div className="field-row">
-            <button type="button" onClick={pickFolder} disabled={busy}>
-              Escolher pasta…
-            </button>
-            <span className="path-truncate muted" title={outputDir}>
-              {outputDir || "—"}
-            </span>
-          </div>
-        </label>
+          <label className="field">
+            <span>Pasta de saída</span>
+            <div className="field-row">
+              <button type="button" onClick={pickFolder} disabled={busy}>
+                Escolher pasta…
+              </button>
+              <span className="path-truncate muted" title={outputDir}>
+                {outputDir || "—"}
+              </span>
+            </div>
+          </label>
 
-        <label className="field">
-          <span>Legendas externas (.srt), opcional</span>
-          <div className="field-row">
-            <button type="button" onClick={pickSrt} disabled={busy}>
-              Escolher .srt…
-            </button>
-            <button type="button" onClick={clearSrt} disabled={busy || !subtitlePath}>
-              Limpar
-            </button>
-            <span className="path-truncate muted" title={subtitlePath ?? ""}>
-              {subtitlePath ? subtitlePath.replace(/^.*[/\\]/, "") : "Nenhum"}
-            </span>
-          </div>
-        </label>
-        <label className="field">
-          <span>Máx. por parte (GB)</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            value={gbInput}
-            onChange={(e) => setGbInput(e.target.value)}
-            disabled={busy}
-            placeholder="ex.: 1,5"
-          />
-        </label>
-      </section>
+          <label className="field">
+            <span>Legendas externas (.srt), opcional</span>
+            <div className="field-row">
+              <button type="button" onClick={pickSrt} disabled={busy}>
+                Escolher .srt…
+              </button>
+              <button type="button" onClick={clearSrt} disabled={busy || !subtitlePath}>
+                Limpar
+              </button>
+              <span className="path-truncate muted" title={subtitlePath ?? ""}>
+                {subtitlePath ? subtitlePath.replace(/^.*[/\\]/, "") : "Nenhum"}
+              </span>
+            </div>
+          </label>
+          <label className="field">
+            <span>Máx. por parte (GB)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={gbInput}
+              onChange={(e) => setGbInput(e.target.value)}
+              disabled={busy}
+              placeholder="ex.: 1,5"
+            />
+          </label>
+        </section>
+      ) : (
+        <section className="panel grid">
+          <label className="field">
+            <span>Arquivos MP4 ou M4V</span>
+            <div className="field-row">
+              <button type="button" onClick={pickMp4ForConvert} disabled={busy}>
+                Escolher .mp4…
+              </button>
+              <span className="muted">
+                {convertPaths.length === 0 ? "Nenhum" : `${convertPaths.length} selecionado(s)`}
+              </span>
+            </div>
+          </label>
+
+          <label className="field">
+            <span>Pasta de saída</span>
+            <div className="field-row">
+              <button type="button" onClick={pickConvertFolder} disabled={busy}>
+                Escolher pasta…
+              </button>
+              <span className="path-truncate muted" title={convertOutputDir}>
+                {convertOutputDir || "—"}
+              </span>
+            </div>
+          </label>
+
+          <p className="hint" style={{ margin: 0 }}>
+            Gera <code>nome.mkv</code> na pasta escolhida (mesmo nome do ficheiro de entrada). Se já
+            existir um <code>.mkv</code> com esse nome, a conversão não sobrescreve.
+          </p>
+        </section>
+      )}
 
       <div className="actions">
-        <button type="button" className="primary" onClick={startQueue} disabled={busy}>
-          Iniciar
-        </button>
+        {mode === "split" ? (
+          <button type="button" className="primary" onClick={startQueue} disabled={busy}>
+            Iniciar divisão
+          </button>
+        ) : (
+          <button type="button" className="primary" onClick={startConvertQueue} disabled={busy}>
+            Iniciar conversão
+          </button>
+        )}
         <button type="button" onClick={cancel} disabled={!busy}>
           Cancelar FFmpeg
         </button>
@@ -310,11 +498,22 @@ export default function App() {
       </section>
 
       <footer className="footer muted small">
-        Com <code>-c copy</code>, o tamanho real de cada parte pode variar em torno do valor alvo.
-        Com .srt externo, o nome do ficheiro (sem extensão) tem de coincidir com o do vídeo (ex.:{" "}
-        <code>Filme.mkv</code> e <code>Filme.srt</code>). Comparação ignora maiúsculas/minúsculas.
-        Saída: <code>nome_part_XXX.srt</code> por cada parte. Vários vídeos na fila exigem o mesmo
-        par nome/SRT em cada item.
+        {mode === "split" ? (
+          <>
+            Com <code>-c copy</code>, o tamanho real de cada parte pode variar em torno do valor
+            alvo. Com .srt externo, o nome do ficheiro (sem extensão) tem de coincidir com o do
+            vídeo (ex.: <code>Filme.mkv</code> e <code>Filme.srt</code>). Comparação ignora
+            maiúsculas/minúsculas. Saída: <code>nome_part_XXX.srt</code> por cada parte. Vários vídeos
+            na fila exigem o mesmo par nome/SRT em cada item.
+          </>
+        ) : (
+          <>
+            Modo MP4 → MKV: remux com <code>-c copy</code> (rápido, sem perdas de qualidade). O
+            vídeo continua no mesmo codec (por exemplo H.264); só muda o contentor para Matroska. Se
+            o FFmpeg recusar copiar algum fluxo, experimente outro ficheiro ou use ferramentas de
+            transcoding.
+          </>
+        )}
       </footer>
     </div>
   );
