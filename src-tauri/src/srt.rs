@@ -1,7 +1,10 @@
-use encoding_rs::WINDOWS_1252;
+use encoding_rs::{UTF_16BE, UTF_16LE, WINDOWS_1252};
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+
+/// Marca de ordem de byte UTF-8 nos ficheiros gerados (melhora deteção em TVs / leitores no Windows).
+const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
 
 #[derive(Debug, Clone)]
 pub struct SrtCue {
@@ -20,24 +23,35 @@ fn parse_ts(h: &str, m: &str, s: &str, ms: &str) -> Option<i64> {
     Some(hh * 3_600_000 + mm * 60_000 + ss * 1_000 + mss)
 }
 
-/// Decodifica bytes de .srt: UTF-8 (com ou sem BOM) ou, se inválido, Windows-1252
-/// (muito comum em legendas PT/BR antigas que não são UTF-8).
+/// Decodifica bytes de .srt para texto Unicode: UTF-8 (com ou sem BOM), UTF-16 LE/BE com BOM,
+/// ou — se não for UTF-8 válido — Windows-1252 (comum em legendas PT/BR antigas).
 fn decode_srt_bytes(bytes: &[u8]) -> Result<String, String> {
-    let payload = if bytes.starts_with(b"\xEF\xBB\xBF") {
-        &bytes[3..]
-    } else {
-        bytes
-    };
+    if bytes.starts_with(b"\xEF\xBB\xBF") {
+        let payload = &bytes[3..];
+        return std::str::from_utf8(payload)
+            .map(|s| s.to_string())
+            .map_err(|_| "Ficheiro com BOM UTF-8 mas corpo não é UTF-8 válido.".into());
+    }
 
-    if let Ok(s) = std::str::from_utf8(payload) {
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let (cow, _, _) = UTF_16LE.decode(bytes);
+        return Ok(cow.into_owned());
+    }
+
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let (cow, _, _) = UTF_16BE.decode(bytes);
+        return Ok(cow.into_owned());
+    }
+
+    if let Ok(s) = std::str::from_utf8(bytes) {
         return Ok(s.to_string());
     }
 
-    let (cow, _, _) = WINDOWS_1252.decode(payload);
+    let (cow, _, _) = WINDOWS_1252.decode(bytes);
     Ok(cow.into_owned())
 }
 
-/// Lê e interpreta um arquivo .srt (UTF-8 ou Windows-1252; UTF-8 com BOM suportado).
+/// Lê e interpreta um arquivo .srt (UTF-8, UTF-16 com BOM, ou Windows-1252).
 pub fn parse_srt_file(path: &Path) -> Result<Vec<SrtCue>, String> {
     let bytes = fs::read(path).map_err(|e| format!("Erro ao ler SRT: {e}"))?;
     let raw = decode_srt_bytes(&bytes)?;
@@ -158,7 +172,10 @@ pub fn write_split_srts(
     for (i, dur) in part_durations_ms.iter().enumerate() {
         let part_cues = cues_for_part(cues, offset_ms, *dur);
         let body = serialize_srt(&part_cues);
-        fs::write(&output_paths[i], body).map_err(|e| format!("Erro ao gravar SRT: {e}"))?;
+        let mut out = Vec::with_capacity(UTF8_BOM.len() + body.len());
+        out.extend_from_slice(UTF8_BOM);
+        out.extend_from_slice(body.as_bytes());
+        fs::write(&output_paths[i], out).map_err(|e| format!("Erro ao gravar SRT: {e}"))?;
         offset_ms += *dur;
     }
 
@@ -168,6 +185,43 @@ pub fn write_split_srts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_utf16_le_with_bom() {
+        let text = "1\n00:00:01,000 --> 00:00:02,000\nOlá\n\n";
+        let mut bytes = vec![0xFFu8, 0xFEu8];
+        for u in text.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        let s = decode_srt_bytes(&bytes).expect("decode");
+        let cues = parse_srt(&s).unwrap();
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].text, "Olá");
+    }
+
+    #[test]
+    fn split_srt_output_starts_with_utf8_bom() {
+        let dir = std::env::temp_dir().join(format!(
+            "videodivider-srt-bom-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let out = dir.join("part.srt");
+        let cues = vec![SrtCue {
+            index: 1,
+            start_ms: 0,
+            end_ms: 2_000,
+            text: "teste".into(),
+        }];
+        write_split_srts(&cues, &[5_000], &[out.clone()]).expect("write");
+        let written = fs::read(&out).expect("read");
+        assert!(
+            written.starts_with(UTF8_BOM),
+            "SRT gerado deve começar com BOM UTF-8"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn parses_cp1252_invalid_utf8() {
