@@ -14,7 +14,7 @@
 2. **[2026-05-09] Build portátil Windows (sem instalador)**
    Do instead: `npm run tauri:win-portable` → `dist-portable/` (pasta + `.zip` com `VideoDivider.exe`).
 
-2. **[2026-05-08] FFmpeg não vai no bundle**
+3. **[2026-05-08] FFmpeg não vai no bundle**
    Do instead: lembrar usuários (README) de instalar FFmpeg e ter `ffmpeg`/`ffprobe` no PATH.
 
 ## Stack Guardrails
@@ -26,3 +26,6 @@
 
 1. **`which`/PATH no Tauri**
    Do instead: testar `ffmpeg_status` no app depois de alterar PATH; reiniciar o app para pegar PATH novo.
+
+2. **Spawn de FFmpeg/ffprobe/taskkill não deve piscar janela de console**
+   Do instead: em novos `Command` filhos no Windows, reutilizar `suppress_child_console` (`CREATE_NO_WINDOW` / `0x08000000`) como em `lib.rs`.

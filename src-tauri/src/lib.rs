@@ -2,6 +2,8 @@ mod srt;
 
 use regex::Regex;
 use serde::Serialize;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -39,6 +41,15 @@ pub struct SplitState {
     current_pid: Mutex<Option<u32>>,
 }
 
+/// No Windows, processos console (ffmpeg, ffprobe, taskkill) não abrem janela de terminal.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn suppress_child_console(cmd: &mut Command) {
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
 fn resolve_bin(name: &str) -> Option<PathBuf> {
     which::which(name).ok()
 }
@@ -63,16 +74,18 @@ fn ffmpeg_status() -> FfmpegStatus {
 
 fn probe_duration_only(path: &str) -> Result<f64, String> {
     let ffprobe = resolve_bin("ffprobe").ok_or("ffprobe não encontrado no PATH.")?;
-    let out = Command::new(&ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ])
+    let mut cmd = Command::new(&ffprobe);
+    cmd.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]);
+    suppress_child_console(&mut cmd);
+    let out = cmd
         .output()
         .map_err(|e| format!("Falha ao executar ffprobe: {e}"))?;
     if !out.status.success() {
@@ -136,10 +149,10 @@ fn estimate_segment_seconds(max_part_bytes: u64, size_bytes: u64, duration_sec: 
 fn kill_pid(pid: u32) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let status = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F", "/T"])
-            .status()
-            .map_err(|e| e.to_string())?;
+        let mut tk = Command::new("taskkill");
+        tk.args(["/PID", &pid.to_string(), "/F", "/T"]);
+        suppress_child_console(&mut tk);
+        let status = tk.status().map_err(|e| e.to_string())?;
         if !status.success() {
             return Err("Não foi possível encerrar o processo do FFmpeg.".into());
         }
@@ -385,6 +398,7 @@ fn split_video_start(
                 .arg("1")
                 .arg(&out_pat_str)
                 .stderr(Stdio::piped());
+            suppress_child_console(&mut cmd);
 
             let mut child = cmd
                 .spawn()
