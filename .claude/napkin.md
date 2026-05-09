@@ -11,6 +11,9 @@
 1. **[2026-05-08] Validar com build real do Tauri**
    Do instead: `npm run tauri build` após mudanças em Rust ou `tauri.conf.json`.
 
+2. **[2026-05-09] Build portátil Windows (sem instalador)**
+   Do instead: `npm run tauri:win-portable` → `dist-portable/` (pasta + `.zip` com `VideoDivider.exe`).
+
 2. **[2026-05-08] FFmpeg não vai no bundle**
    Do instead: lembrar usuários (README) de instalar FFmpeg e ter `ffmpeg`/`ffprobe` no PATH.
 
